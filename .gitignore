@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+blgen
 
 # Test binary, built with `go test -c`
 *.test
@@ -16,6 +17,8 @@
 coverage.*
 *.coverprofile
 profile.cov
+blgen.conf.yaml
+BlockedCountriesBlocks.txt
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
