@@ -1,0 +1,26 @@
+# blgen.conf.yaml Configuration File
+
+# Your MaxMind Account ID. This value must be provided either here
+# in the config file or via the CLI flag (-id).
+account_id: "YOUR_MAXMIND_ACCOUNT_ID"
+
+# Your MaxMind License Key. This value must be provided either here
+# in the config file or via the CLI flag (-key).
+license_key: "YOUR_LICENSE_KEY"
+
+# Optional: The destination path for the generated output file.
+# Defaults to the directory where the command is run.
+# Can also be set via the CLI flag (-outpath).
+# output_filepath: "./destination/folder"
+
+# Optional: The name of the generated file.
+# Defaults to "BlockedCountriesBlocks.txt".
+# Can also be set via the CLI flag (-outname).
+# output_filename: "custom_blocklist.txt"
+
+# List of ISO 3166-1 alpha-2 Country Codes that you wish to block.
+# This list is ignored if the CLI flag (-bc) is used.
+# The CLI flag can be used multiple times: 'blgen -bc=C1 -bc=C2'.
+# blocked_countries:
+#   - "C1"
+#   - "C2"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Downloads and creates a country blocklist using MaxMind's GeoLite2 database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/blgen -c /etc/blgen.conf.yaml
+
+[Install]
+WantedBy=multi-user.target
