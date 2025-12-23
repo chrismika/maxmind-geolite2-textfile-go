@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,12 +21,14 @@ import (
 )
 
 type Config struct {
-	AccountID             string   `yaml:"account_id"`
-	LicenseKey            string   `yaml:"license_key"`
-	BlockedCountriesInput []string `yaml:"blocked_countries"`
-	OutputFilePath        string   `yaml:"output_filepath"`
-	OutputFilename        string   `yaml:"output_filename"`
-	BlockedCountries      map[string]struct{}
+	AccountID              string   `yaml:"account_id"`
+	LicenseKey             string   `yaml:"license_key"`
+	BlockedCountriesInput  []string `yaml:"blocked_countries"`
+	BlockedContinentsInput []string `yaml:"blocked_continents"`
+	OutputFilePath         string   `yaml:"output_filepath"`
+	OutputFilename         string   `yaml:"output_filename"`
+	BlockedCountries       map[string]struct{}
+	BlockedContinents      map[string]struct{}
 }
 
 const (
@@ -52,9 +55,11 @@ func (s *stringSlice) Set(value string) error {
 
 func parseCLIOptions() (*Config, string) {
 	var blockedCountries stringSlice
+	var blockedContinents stringSlice
 	var configFilePath string
 	cfg := &Config{
-		BlockedCountries: make(map[string]struct{}),
+		BlockedCountries:  map[string]struct{}{},
+		BlockedContinents: map[string]struct{}{},
 	}
 
 	flag.StringVar(&configFilePath, "c", "", "Config file")
@@ -63,6 +68,7 @@ func parseCLIOptions() (*Config, string) {
 	flag.StringVar(&cfg.OutputFilePath, "outpath", "", "Output path")
 	flag.StringVar(&cfg.OutputFilename, "outname", "BlockedCountriesBlocks.txt", "Output file")
 	flag.Var(&blockedCountries, "bc", "ISO Country codes to block (can be used multiple times)")
+	flag.Var(&blockedContinents, "bn", "MaxMind continent codes to block (can be used multiple times)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", os.Args[0])
@@ -74,19 +80,26 @@ func parseCLIOptions() (*Config, string) {
 	for _, block := range blockedCountries {
 		cfg.BlockedCountries[strings.ToUpper(block)] = struct{}{}
 	}
+	for _, block := range blockedContinents {
+		cfg.BlockedContinents[strings.ToUpper(block)] = struct{}{}
+	}
 
 	return cfg, configFilePath
 }
 
-func (cfg *Config) populateBlockedCountriesMap() {
-	for _, countryCode := range cfg.BlockedCountriesInput {
-		cfg.BlockedCountries[strings.ToUpper(countryCode)] = struct{}{}
+func populateBlockedMap(blockedItems []string, blockMap *map[string]struct{}) {
+	if *blockMap == nil {
+		*blockMap = map[string]struct{}{}
+	}
+	for _, code := range blockedItems {
+		(*blockMap)[strings.ToUpper(code)] = struct{}{}
 	}
 }
 
 func loadConfigFile(configFilePath string) (*Config, error) {
 	cfg := &Config{
-		BlockedCountries: make(map[string]struct{}),
+		BlockedCountries:  map[string]struct{}{},
+		BlockedContinents: map[string]struct{}{},
 	}
 
 	configFile, err := os.Open(configFilePath)
@@ -101,13 +114,8 @@ func loadConfigFile(configFilePath string) (*Config, error) {
 		return nil, fmt.Errorf("Error parsing config file %s: %w", configFilePath, err)
 	}
 
-	cfg.populateBlockedCountriesMap()
-
-	normalizedBlockedCountries := make(map[string]struct{})
-	for country := range cfg.BlockedCountries {
-		normalizedBlockedCountries[strings.ToUpper(country)] = struct{}{}
-	}
-	cfg.BlockedCountries = normalizedBlockedCountries
+	populateBlockedMap(cfg.BlockedCountriesInput, &cfg.BlockedCountries)
+	populateBlockedMap(cfg.BlockedContinentsInput, &cfg.BlockedContinents)
 
 	return cfg, nil
 }
@@ -132,13 +140,14 @@ func loadConfig() (*Config, error) {
 				cfg.OutputFilePath = configFile.OutputFilePath
 			}
 		}
-		if cfg.OutputFilename == "" {
+		if cfg.OutputFilename == "BlockedCountriesBlocks.txt" && configFile.OutputFilename != "" {
 			cfg.OutputFilename = configFile.OutputFilename
 		}
 		if len(cfg.BlockedCountries) == 0 {
-			for countryCode := range configFile.BlockedCountries {
-				cfg.BlockedCountries[countryCode] = struct{}{}
-			}
+			maps.Copy(cfg.BlockedCountries, configFile.BlockedCountries)
+		}
+		if len(cfg.BlockedContinents) == 0 {
+			maps.Copy(cfg.BlockedContinents, configFile.BlockedContinents)
 		}
 	}
 
@@ -328,15 +337,15 @@ func getGeonameIDs(tmpDir string, cfg *Config) (map[string]string, error) {
 	csvHeader, err := csvData.Read()
 	if err != nil {
 		if err == io.EOF {
-			return make(map[string]string), nil
+			return map[string]string{}, nil
 		}
 		return nil, fmt.Errorf("failed to read %s CSV header: %w", geoLiteLocationsCSV, err)
 	}
-	columns := make(map[string]int)
+	columns := map[string]int{}
 	for i, name := range csvHeader {
 		columns[name] = i
 	}
-	neededFields := []string{"geoname_id", "country_iso_code"}
+	neededFields := []string{"geoname_id", "country_iso_code", "continent_code"}
 	for _, column := range neededFields {
 		if _, ok := columns[column]; !ok {
 			return nil, fmt.Errorf("missing needed column: %s", column)
@@ -353,9 +362,18 @@ func getGeonameIDs(tmpDir string, cfg *Config) (map[string]string, error) {
 			}
 			return nil, fmt.Errorf("failed to read %s CSV line: %w", geoLiteLocationsCSV, err)
 		}
+		geonameID := line[columns["geoname_id"]]
 		countryISOCode := strings.ToUpper(line[columns["country_iso_code"]])
 		if _, isBlocked := cfg.BlockedCountries[countryISOCode]; isBlocked {
-			geonameIDsSet[line[columns["geoname_id"]]] = countryISOCode
+			geonameIDsSet[geonameID] = countryISOCode
+		}
+		continentMMCode := strings.ToUpper(line[columns["continent_code"]])
+		if _, isBlocked := cfg.BlockedContinents[continentMMCode]; isBlocked {
+			if existingGeonameID, found := geonameIDsSet[geonameID]; found {
+				geonameIDsSet[geonameID] = existingGeonameID + ", " + continentMMCode + "*"
+			} else {
+				geonameIDsSet[geonameID] = continentMMCode + "*"
+			}
 		}
 	}
 	return geonameIDsSet, nil
@@ -385,7 +403,7 @@ func getAndWriteBlocks(tmpDir string, geonameIDsSet map[string]string, cfg *Conf
 		}
 		return fmt.Errorf("failed to read CSV header: %w", err)
 	}
-	columns := make(map[string]int)
+	columns := map[string]int{}
 	for i, name := range csvHeader {
 		columns[name] = i
 	}
@@ -407,6 +425,7 @@ func getAndWriteBlocks(tmpDir string, geonameIDsSet map[string]string, cfg *Conf
 
 	timestamp := time.Now().Format("2006/01/02-15:04")
 	fmt.Fprintf(outputData, "# list generated %s\n", timestamp)
+	fmt.Fprintf(outputData, "# cidr ; Country Continent*\n")
 
 	for {
 		line, err := csvData.Read()
