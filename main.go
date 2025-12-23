@@ -352,7 +352,7 @@ func getGeonameIDs(tmpDir string, cfg *Config) (map[string]string, error) {
 		}
 	}
 
-	geonameIDsSet := make(map[string]string)
+	geonameIDsSet := make(map[string]string, 75000)
 
 	for {
 		line, err := csvData.Read()
@@ -449,10 +449,34 @@ func getAndWriteBlocks(tmpDir string, geonameIDsSet map[string]string, cfg *Conf
 func moveFile(tmpDir string, cfg *Config) error {
 	oldPath := filepath.Join(tmpDir, cfg.OutputFilename)
 	newPath := filepath.Join(cfg.OutputFilePath, cfg.OutputFilename)
-	if err := os.Rename(oldPath, newPath); err != nil {
-		return fmt.Errorf("failed to rename file: %w", err)
+	if err := os.Rename(oldPath, newPath); err == nil {
+		return nil
 	}
-	return nil
+	return moveFileFallback(oldPath, newPath)
+}
+
+func moveFileFallback(oldPath, newPath string) error {
+	oldFile, err := os.Open(oldPath)
+	if err != nil {
+		return fmt.Errorf("failed to open source: %w", err)
+	}
+	defer oldFile.Close()
+
+	newFile, err := os.Create(newPath)
+	if err != nil {
+		return fmt.Errorf("failed to create destination: %w", err)
+	}
+
+	if _, err := io.Copy(newFile, oldFile); err != nil {
+		newFile.Close()
+		return fmt.Errorf("copy failed: %w", err)
+	}
+
+	if err := newFile.Close(); err != nil {
+		return fmt.Errorf("failed to close destination: %w", err)
+	}
+
+	return os.Remove(oldPath)
 }
 
 func createTmpDir() (string, error) {
