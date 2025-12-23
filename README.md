@@ -44,6 +44,8 @@ sudo make uninstall
 Usage: ./blgen [options]
   -bc value
     	ISO Country codes to block (can be used multiple times)
+  -bn value
+    	MaxMind continent codes to block (can be used multiple times)
   -c string
     	Config file
   -id string

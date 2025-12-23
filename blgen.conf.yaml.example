@@ -24,3 +24,10 @@ license_key: "YOUR_LICENSE_KEY"
 # blocked_countries:
 #   - "C1"
 #   - "C2"
+
+# List of MaxMind's alpha-2 Continent Codes that you wish to block.
+# This list is ignored if the CLI flag (-bn) is used.
+# The CLI flag can be used multiple times: 'blgen -bn=C1 -bn=C2'.
+# blocked_continents:
+#   - "C1"
+#   - "C2"
