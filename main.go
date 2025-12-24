@@ -87,13 +87,12 @@ func parseCLIOptions() (*Config, string) {
 	return cfg, configFilePath
 }
 
-func populateBlockedMap(blockedItems []string, blockMap *map[string]struct{}) {
-	if *blockMap == nil {
-		*blockMap = map[string]struct{}{}
-	}
+func populateBlockedMap(blockedItems []string) map[string]struct{} {
+	blockMap := make(map[string]struct{}, len(blockedItems))
 	for _, code := range blockedItems {
-		(*blockMap)[strings.ToUpper(code)] = struct{}{}
+		(blockMap)[strings.ToUpper(code)] = struct{}{}
 	}
+	return blockMap
 }
 
 func loadConfigFile(configFilePath string) (*Config, error) {
@@ -114,8 +113,8 @@ func loadConfigFile(configFilePath string) (*Config, error) {
 		return nil, fmt.Errorf("Error parsing config file %s: %w", configFilePath, err)
 	}
 
-	populateBlockedMap(cfg.BlockedCountriesInput, &cfg.BlockedCountries)
-	populateBlockedMap(cfg.BlockedContinentsInput, &cfg.BlockedContinents)
+	cfg.BlockedCountries = populateBlockedMap(cfg.BlockedCountriesInput)
+	cfg.BlockedContinents = populateBlockedMap(cfg.BlockedContinentsInput)
 
 	return cfg, nil
 }
