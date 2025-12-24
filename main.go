@@ -217,8 +217,8 @@ func verifySHA256(actualSHA string, cfg *Config) error {
 	if httpResponse.StatusCode != http.StatusOK {
 		return fmt.Errorf("sha bad status: %s", httpResponse.Status)
 	}
-	httpResonseBodyMaxRead := io.LimitReader(httpResponse.Body, 1024)
-	shaData, err := io.ReadAll(httpResonseBodyMaxRead)
+	httpResponseBodyMaxRead := io.LimitReader(httpResponse.Body, 1024)
+	shaData, err := io.ReadAll(httpResponseBodyMaxRead)
 	if err != nil {
 		return fmt.Errorf("failed to read sha data: %w", err)
 	}
