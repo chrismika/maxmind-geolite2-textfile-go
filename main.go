@@ -158,48 +158,50 @@ func loadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-func downloadZip(tmpDir string, cfg *Config) (string, error) {
+func downloadZip(tmpDir string, cfg *Config) (string, string, error) {
 	httpRequest, err := http.NewRequest("GET", dbURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create zip HTTP request: %w", err)
+		return "", "", fmt.Errorf("failed to create zip HTTP request: %w", err)
 	}
 	httpRequest.SetBasicAuth(cfg.AccountID, cfg.LicenseKey)
 
 	httpResponse, err := httpClient.Do(httpRequest)
 	if err != nil {
-		return "", fmt.Errorf("zip fetch failed: %w", err)
+		return "", "", fmt.Errorf("zip fetch failed: %w", err)
 	}
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("zip bad status: %s", httpResponse.Status)
+		return "", "", fmt.Errorf("zip bad status: %s", httpResponse.Status)
 	}
 
 	const zipFilename = "db.zip"
 	tmpZipPath := filepath.Join(tmpDir, zipFilename+".tmp")
 	tmpZipFile, err := os.Create(tmpZipPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
+		return "", "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	if _, err := io.Copy(tmpZipFile, httpResponse.Body); err != nil {
+	sha256Hash := sha256.New()
+	tee := io.TeeReader(httpResponse.Body, sha256Hash)
+	if _, err := io.Copy(tmpZipFile, tee); err != nil {
 		tmpZipFile.Close()
-		return "", fmt.Errorf("failed to write file: %w", err)
+		return "", "", fmt.Errorf("failed to write file: %w", err)
 	}
 
 	if err := tmpZipFile.Close(); err != nil {
-		return "", fmt.Errorf("failed to close tmp file: %w", err)
+		return "", "", fmt.Errorf("failed to' close tmp file: %w", err)
 	}
 
 	zipPath := filepath.Join(tmpDir, zipFilename)
 	if err := os.Rename(tmpZipPath, zipPath); err != nil {
-		return "", fmt.Errorf("failed to rename temp file: %w", err)
+		return "", "", fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
-	return zipPath, nil
+	return zipPath, hex.EncodeToString(sha256Hash.Sum(nil)), nil
 }
 
-func verifySHA256(zipPath string, cfg *Config) error {
+func verifySHA256(actualSHA string, cfg *Config) error {
 	httpRequest, err := http.NewRequest("GET", shaURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create sha HTTP request: %w", err)
@@ -226,19 +228,6 @@ func verifySHA256(zipPath string, cfg *Config) error {
 		return fmt.Errorf("invalid sha file")
 	}
 	expectedSHA := shaParts[0]
-
-	zipFile, err := os.Open(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer zipFile.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, zipFile); err != nil {
-		return fmt.Errorf("failed to read file for sha256: %w", err)
-	}
-
-	actualSHA := hex.EncodeToString(hash.Sum(nil))
 
 	if actualSHA != expectedSHA {
 		return fmt.Errorf("sha256 mismatch: got %s, expected %s", actualSHA, expectedSHA)
@@ -307,12 +296,12 @@ func extractZip(zipPath, tmpDir string) error {
 }
 
 func downloadGeolite2(tmpDir string, cfg *Config) error {
-	zipPath, err := downloadZip(tmpDir, cfg)
+	zipPath, sha256Hash, err := downloadZip(tmpDir, cfg)
 	if err != nil {
 		return err
 	}
 
-	if err := verifySHA256(zipPath, cfg); err != nil {
+	if err := verifySHA256(sha256Hash, cfg); err != nil {
 		return err
 	}
 
