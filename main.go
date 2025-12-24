@@ -87,13 +87,12 @@ func parseCLIOptions() (*Config, string) {
 	return cfg, configFilePath
 }
 
-func populateBlockedMap(blockedItems []string, blockMap *map[string]struct{}) {
-	if *blockMap == nil {
-		*blockMap = map[string]struct{}{}
-	}
+func populateBlockedMap(blockedItems []string) map[string]struct{} {
+	blockMap := make(map[string]struct{}, len(blockedItems))
 	for _, code := range blockedItems {
-		(*blockMap)[strings.ToUpper(code)] = struct{}{}
+		(blockMap)[strings.ToUpper(code)] = struct{}{}
 	}
+	return blockMap
 }
 
 func loadConfigFile(configFilePath string) (*Config, error) {
@@ -114,8 +113,8 @@ func loadConfigFile(configFilePath string) (*Config, error) {
 		return nil, fmt.Errorf("Error parsing config file %s: %w", configFilePath, err)
 	}
 
-	populateBlockedMap(cfg.BlockedCountriesInput, &cfg.BlockedCountries)
-	populateBlockedMap(cfg.BlockedContinentsInput, &cfg.BlockedContinents)
+	cfg.BlockedCountries = populateBlockedMap(cfg.BlockedCountriesInput)
+	cfg.BlockedContinents = populateBlockedMap(cfg.BlockedContinentsInput)
 
 	return cfg, nil
 }
@@ -159,48 +158,50 @@ func loadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-func downloadZip(tmpDir string, cfg *Config) (string, error) {
+func downloadZip(tmpDir string, cfg *Config) (string, string, error) {
 	httpRequest, err := http.NewRequest("GET", dbURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create zip HTTP request: %w", err)
+		return "", "", fmt.Errorf("failed to create zip HTTP request: %w", err)
 	}
 	httpRequest.SetBasicAuth(cfg.AccountID, cfg.LicenseKey)
 
 	httpResponse, err := httpClient.Do(httpRequest)
 	if err != nil {
-		return "", fmt.Errorf("zip fetch failed: %w", err)
+		return "", "", fmt.Errorf("zip fetch failed: %w", err)
 	}
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("zip bad status: %s", httpResponse.Status)
+		return "", "", fmt.Errorf("zip bad status: %s", httpResponse.Status)
 	}
 
 	const zipFilename = "db.zip"
 	tmpZipPath := filepath.Join(tmpDir, zipFilename+".tmp")
 	tmpZipFile, err := os.Create(tmpZipPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
+		return "", "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	if _, err := io.Copy(tmpZipFile, httpResponse.Body); err != nil {
+	sha256Hash := sha256.New()
+	tee := io.TeeReader(httpResponse.Body, sha256Hash)
+	if _, err := io.Copy(tmpZipFile, tee); err != nil {
 		tmpZipFile.Close()
-		return "", fmt.Errorf("failed to write file: %w", err)
+		return "", "", fmt.Errorf("failed to write file: %w", err)
 	}
 
 	if err := tmpZipFile.Close(); err != nil {
-		return "", fmt.Errorf("failed to close tmp file: %w", err)
+		return "", "", fmt.Errorf("failed to' close tmp file: %w", err)
 	}
 
 	zipPath := filepath.Join(tmpDir, zipFilename)
 	if err := os.Rename(tmpZipPath, zipPath); err != nil {
-		return "", fmt.Errorf("failed to rename temp file: %w", err)
+		return "", "", fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
-	return zipPath, nil
+	return zipPath, hex.EncodeToString(sha256Hash.Sum(nil)), nil
 }
 
-func verifySHA256(zipPath string, cfg *Config) error {
+func verifySHA256(actualSHA string, cfg *Config) error {
 	httpRequest, err := http.NewRequest("GET", shaURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create sha HTTP request: %w", err)
@@ -216,8 +217,8 @@ func verifySHA256(zipPath string, cfg *Config) error {
 	if httpResponse.StatusCode != http.StatusOK {
 		return fmt.Errorf("sha bad status: %s", httpResponse.Status)
 	}
-	httpResonseBodyMaxRead := io.LimitReader(httpResponse.Body, 1024)
-	shaData, err := io.ReadAll(httpResonseBodyMaxRead)
+	httpResponseBodyMaxRead := io.LimitReader(httpResponse.Body, 1024)
+	shaData, err := io.ReadAll(httpResponseBodyMaxRead)
 	if err != nil {
 		return fmt.Errorf("failed to read sha data: %w", err)
 	}
@@ -228,19 +229,6 @@ func verifySHA256(zipPath string, cfg *Config) error {
 	}
 	expectedSHA := shaParts[0]
 
-	zipFile, err := os.Open(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer zipFile.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, zipFile); err != nil {
-		return fmt.Errorf("failed to read file for sha256: %w", err)
-	}
-
-	actualSHA := hex.EncodeToString(hash.Sum(nil))
-
 	if actualSHA != expectedSHA {
 		return fmt.Errorf("sha256 mismatch: got %s, expected %s", actualSHA, expectedSHA)
 	}
@@ -249,6 +237,10 @@ func verifySHA256(zipPath string, cfg *Config) error {
 }
 
 func extractAndWriteFile(file *zip.File, destinationDir string) error {
+	if !filepath.IsLocal(file.Name) {
+		return fmt.Errorf("illegal file path in zip: %s", file.Name)
+	}
+
 	fileName := filepath.Base(file.Name)
 	extractedFilePath := filepath.Join(destinationDir, fileName)
 
@@ -262,11 +254,15 @@ func extractAndWriteFile(file *zip.File, destinationDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", extractedFilePath, err)
 	}
-	defer extractedFile.Close()
 
 	_, err = io.Copy(extractedFile, zipFileContent)
 	if err != nil {
+		extractedFile.Close()
 		return fmt.Errorf("failed to write to file %s to %s: %w", fileName, extractedFilePath, err)
+	}
+
+	if err := extractedFile.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	return nil
@@ -308,12 +304,12 @@ func extractZip(zipPath, tmpDir string) error {
 }
 
 func downloadGeolite2(tmpDir string, cfg *Config) error {
-	zipPath, err := downloadZip(tmpDir, cfg)
+	zipPath, sha256Hash, err := downloadZip(tmpDir, cfg)
 	if err != nil {
 		return err
 	}
 
-	if err := verifySHA256(zipPath, cfg); err != nil {
+	if err := verifySHA256(sha256Hash, cfg); err != nil {
 		return err
 	}
 
@@ -364,13 +360,14 @@ func getGeonameIDs(tmpDir string, cfg *Config) (map[string]string, error) {
 		}
 		geonameID := line[columns["geoname_id"]]
 		countryISOCode := strings.ToUpper(line[columns["country_iso_code"]])
-		if _, isBlocked := cfg.BlockedCountries[countryISOCode]; isBlocked {
-			geonameIDsSet[geonameID] = countryISOCode
-		}
 		continentMMCode := strings.ToUpper(line[columns["continent_code"]])
-		if _, isBlocked := cfg.BlockedContinents[continentMMCode]; isBlocked {
-			if existingGeonameID, found := geonameIDsSet[geonameID]; found {
-				geonameIDsSet[geonameID] = existingGeonameID + ", " + continentMMCode + "*"
+		_, isCountryBlocked := cfg.BlockedCountries[countryISOCode]
+		_, isContinentBlocked := cfg.BlockedContinents[continentMMCode]
+		if isCountryBlocked || isContinentBlocked {
+			if isCountryBlocked && isContinentBlocked {
+				geonameIDsSet[geonameID] = countryISOCode + ", " + continentMMCode + "*"
+			} else if isCountryBlocked {
+				geonameIDsSet[geonameID] = countryISOCode
 			} else {
 				geonameIDsSet[geonameID] = continentMMCode + "*"
 			}
