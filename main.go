@@ -364,13 +364,14 @@ func getGeonameIDs(tmpDir string, cfg *Config) (map[string]string, error) {
 		}
 		geonameID := line[columns["geoname_id"]]
 		countryISOCode := strings.ToUpper(line[columns["country_iso_code"]])
-		if _, isBlocked := cfg.BlockedCountries[countryISOCode]; isBlocked {
-			geonameIDsSet[geonameID] = countryISOCode
-		}
 		continentMMCode := strings.ToUpper(line[columns["continent_code"]])
-		if _, isBlocked := cfg.BlockedContinents[continentMMCode]; isBlocked {
-			if existingGeonameID, found := geonameIDsSet[geonameID]; found {
-				geonameIDsSet[geonameID] = existingGeonameID + ", " + continentMMCode + "*"
+		_, isCountryBlocked := cfg.BlockedCountries[countryISOCode]
+		_, isContinentBlocked := cfg.BlockedContinents[continentMMCode]
+		if isCountryBlocked || isContinentBlocked {
+			if isCountryBlocked && isContinentBlocked {
+				geonameIDsSet[geonameID] = countryISOCode + ", " + continentMMCode + "*"
+			} else if isCountryBlocked {
+				geonameIDsSet[geonameID] = countryISOCode
 			} else {
 				geonameIDsSet[geonameID] = continentMMCode + "*"
 			}
