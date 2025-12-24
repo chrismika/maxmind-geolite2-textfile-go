@@ -237,6 +237,10 @@ func verifySHA256(actualSHA string, cfg *Config) error {
 }
 
 func extractAndWriteFile(file *zip.File, destinationDir string) error {
+	if !filepath.IsLocal(file.Name) {
+		return fmt.Errorf("illegal file path in zip: %s", file.Name)
+	}
+
 	fileName := filepath.Base(file.Name)
 	extractedFilePath := filepath.Join(destinationDir, fileName)
 
@@ -250,11 +254,15 @@ func extractAndWriteFile(file *zip.File, destinationDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", extractedFilePath, err)
 	}
-	defer extractedFile.Close()
 
 	_, err = io.Copy(extractedFile, zipFileContent)
 	if err != nil {
+		extractedFile.Close()
 		return fmt.Errorf("failed to write to file %s to %s: %w", fileName, extractedFilePath, err)
+	}
+
+	if err := extractedFile.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	return nil
