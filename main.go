@@ -67,8 +67,8 @@ func parseCLIOptions() (*Config, string) {
 	flag.StringVar(&cfg.LicenseKey, "key", "", "License key")
 	flag.StringVar(&cfg.OutputFilePath, "outpath", "", "Output path")
 	flag.StringVar(&cfg.OutputFilename, "outname", "BlockedCountriesBlocks.txt", "Output file")
-	flag.Var(&blockedCountries, "bc", "ISO Country codes to block (can be used multiple times)")
-	flag.Var(&blockedContinents, "bn", "MaxMind continent codes to block (can be used multiple times)")
+	flag.Var(&blockedCountries, "bc", "ISO 3166-1 alpha-2 country codes to block (can be used multiple times)")
+	flag.Var(&blockedContinents, "bn", "MaxMind alpha-2 continent codes to block (can be used multiple times)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", os.Args[0])
